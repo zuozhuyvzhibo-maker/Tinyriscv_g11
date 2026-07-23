@@ -1,0 +1,1 @@
+export DESIGN_DIR=$(pwd)/rtl/

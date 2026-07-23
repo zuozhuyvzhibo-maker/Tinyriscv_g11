@@ -6,23 +6,23 @@ module tinyriscv_top_IO(
     output wire over,         // 测试是否完成信号
     output wire succ,         // 测试是否成功信号
 
-    output wire halted_ind,  // jtag是否已经halt住CPU信号
+    //output wire halted_ind,  // jtag是否已经halt住CPU信号
 
     input wire uart_debug_pin, // 串口下载使能引脚
 
     output wire uart_tx_pin, // UART发送引脚
     input wire uart_rx_pin,  // UART接收引脚
-    inout wire[1:0] gpio,    // GPIO引脚
+    //inout wire[1:0] gpio,    // GPIO引脚
 
-    input wire jtag_TCK,     // JTAG TCK引脚
-    input wire jtag_TMS,     // JTAG TMS引脚
-    input wire jtag_TDI,     // JTAG TDI引脚
-    output wire jtag_TDO,    // JTAG TDO引脚
+    //input wire jtag_TCK,     // JTAG TCK引脚
+    //input wire jtag_TMS,     // JTAG TMS引脚
+    //input wire jtag_TDI,     // JTAG TDI引脚
+    //output wire jtag_TDO,    // JTAG TDO引脚
 
-    input wire spi_miso,     // SPI MISO引脚
-    output wire spi_mosi,    // SPI MOSI引脚
-    output wire spi_ss,      // SPI SS引脚
-    output wire spi_clk      // SPI CLK引脚
+    //input wire spi_miso,     // SPI MISO引脚
+    //output wire spi_mosi,    // SPI MOSI引脚
+    //output wire spi_ss,      // SPI SS引脚
+    //output wire spi_clk      // SPI CLK引脚
 );
 
 	wire	clk_core, rst_core, over_core, succ_core, halted_ind_core, uart_debug_pin_core;
