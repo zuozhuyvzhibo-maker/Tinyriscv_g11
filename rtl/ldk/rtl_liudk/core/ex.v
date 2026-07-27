@@ -1,0 +1,828 @@
+ /*                                                                      
+ Copyright 2019 Blue Liang, liangkangnan@163.com
+                                                                         
+ Licensed under the Apache License, Version 2.0 (the "License");         
+ you may not use this file except in compliance with the License.        
+ You may obtain a copy of the License at                                 
+                                                                         
+     http://www.apache.org/licenses/LICENSE-2.0                          
+                                                                         
+ Unless required by applicable law or agreed to in writing, software    
+ distributed under the License is distributed on an "AS IS" BASIS,       
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and     
+ limitations under the License.                                          
+ */
+
+`include "defines.v"
+
+// 执行模块
+// 纯组合逻辑电路
+module ex(
+
+    input wire clk,
+    input wire rst,
+
+    // from id
+    input wire[`InstBus] inst_i,            // 指令内容
+    input wire[`InstAddrBus] inst_addr_i,   // 指令地址
+    input wire reg_we_i,                    // 是否写通用寄存器
+    input wire[`RegAddrBus] reg_waddr_i,    // 写通用寄存器地址
+    input wire[`RegBus] reg1_rdata_i,       // 通用寄存器1输入数据
+    input wire[`RegBus] reg2_rdata_i,       // 通用寄存器2输入数据
+    input wire[`MemAddrBus] op1_i,
+    input wire[`MemAddrBus] op2_i,
+    input wire[`MemAddrBus] op1_jump_i,
+    input wire[`MemAddrBus] op2_jump_i,
+
+    // from mem
+    input wire[`MemBus] mem_rdata_i,        // 内存输入数据
+    input wire mem_ack_i,
+
+    input wire ext_inst_start_i,
+
+
+    // to mem
+    output reg[`MemBus] mem_wdata_o,        // 写内存数据
+    output reg[`MemAddrBus] mem_raddr_o,    // 读内存地址
+    output reg[`MemAddrBus] mem_waddr_o,    // 写内存地址
+    output wire mem_we_o,                   // 是否要写内存
+    output wire mem_req_o,                  // 请求访问内存标志
+    output wire mem_no_ack_o,               // 普通load/store访问非bridge设备时无需等待ack
+
+    // to regs
+    output wire[`RegBus] reg_wdata_o,       // 写寄存器数据
+    output wire reg_we_o,                   // 是否要写通用寄存器
+    output wire[`RegAddrBus] reg_waddr_o,   // 写通用寄存器地址
+
+    // to ctrl
+    output wire ext_inst_done_o,
+    output wire ife_use_uart_o,
+    output wire hold_flag_o,                // 是否暂停标志
+    output wire jump_flag_o,                // 是否跳转标志
+    output wire[`InstAddrBus] jump_addr_o  // 跳转目的地址
+
+    );
+
+    wire[1:0] mem_raddr_index;
+    wire[1:0] mem_waddr_index;
+    wire[31:0] sr_shift;
+    wire[31:0] sri_shift;
+    wire[31:0] sr_shift_mask;
+    wire[31:0] sri_shift_mask;
+    wire[31:0] op1_add_op2_res;
+    wire[31:0] op1_jump_add_op2_jump_res;
+    wire[31:0] reg1_data_invert;
+    wire[31:0] reg2_data_invert;
+    wire op1_ge_op2_signed;
+    wire op1_ge_op2_unsigned;
+    wire op1_eq_op2;
+    wire[6:0] opcode;
+    wire[2:0] funct3;
+    wire[6:0] funct7;
+    wire[4:0] rd;
+    wire[4:0] uimm;
+    reg[`RegBus] reg_wdata;
+    reg reg_we;
+    reg[`RegAddrBus] reg_waddr;
+    reg hold_flag;
+    reg jump_flag;
+    reg[`InstAddrBus] jump_addr;
+    reg mem_we;
+    reg mem_req;
+
+    localparam [`MemAddrBus] SID_UART_CTRL_ADDR   = 32'h3000_0000 ;
+    localparam [`MemAddrBus] SID_UART_STATUS_ADDR = 32'h3000_0004 ;
+    localparam [`MemAddrBus] SID_UART_TXDATA_ADDR = 32'h3000_000c ;
+    localparam [`MemAddrBus] IIC_ADDR_REG_ADDR    = 32'h7001_0000 ;
+    localparam [`MemAddrBus] IIC_DATAOUT_REG_ADDR = 32'h7002_0000 ;
+    localparam [`MemAddrBus] IIC_DATAIN_REG_ADDR  = 32'h7003_0000 ;
+    localparam [`MemAddrBus] IIC_LM75_ADDR        = 32'h0000_0091 ; // TODO: 需要进行修改和完善
+
+    localparam [2:0] SID_IDLE        = 3'd0;
+    localparam [2:0] SID_CTRL_WRITE  = 3'd1;
+    localparam [2:0] SID_DATA_WRITE  = 3'd2;
+    localparam [2:0] SID_STATUS_READ = 3'd3;
+    localparam [2:0] SID_DONE        = 3'd4;
+
+    reg[2:0] sid_state;
+    reg[3:0] sid_index;
+    wire is_sid_inst;
+    wire is_ife_inst;
+    wire is_rt_inst;
+    wire ife_imm_is_zero;
+    wire ife_uart_active;
+    wire[31:0] ife_imm_ext;
+    wire[7:0] uart_tx_data;
+    wire ext_isd_ife_inst_done;
+    wire ext_rt_inst_done;
+
+    function [3:0] sid_number_lsb;
+        input [3:0] index;
+        begin
+            case (index)
+                4'd0: sid_number_lsb = 4'h2;
+                4'd1: sid_number_lsb = 4'h0;
+                4'd2: sid_number_lsb = 4'h2;
+                4'd3: sid_number_lsb = 4'h5;
+                4'd4: sid_number_lsb = 4'h2;
+                4'd5: sid_number_lsb = 4'h1;
+                4'd6: sid_number_lsb = 4'h0;
+                4'd7: sid_number_lsb = 4'h9;
+                4'd8: sid_number_lsb = 4'h0;
+                4'd9: sid_number_lsb = 4'h5;
+                default: sid_number_lsb = 4'h0;
+            endcase
+        end
+    endfunction
+
+    assign opcode = inst_i[6:0];
+    assign funct3 = inst_i[14:12];
+    assign funct7 = inst_i[31:25];
+    assign rd = inst_i[11:7];
+    assign uimm = inst_i[19:15];
+    assign is_sid_inst = (opcode == `INST_EXTEND) && (funct3 == `INST_SID);
+    assign is_ife_inst = (opcode == `INST_EXTEND) && (funct3 == `INST_IFE);
+    assign is_rt_inst = (opcode == `INST_EXTEND) && (funct3 == `INST_RT);
+    assign ife_imm_is_zero = (inst_i[31:20] == 12'd0);
+    assign ife_imm_ext = {{20{inst_i[31]}}, inst_i[31:20]};
+    assign ife_use_uart_o = is_ife_inst && ife_imm_is_zero && op1_ge_op2_unsigned;
+    assign ife_uart_active = is_ife_inst && ife_use_uart_o;
+    assign uart_tx_data = is_sid_inst ? {4'h3, sid_number_lsb(sid_index)} : op1_i[7:0];
+    assign ext_isd_ife_inst_done = (sid_state == SID_DONE) ? `EXT_INST_DONE : `EXT_INST_NOT_DONE;  //逻辑待补充
+    assign ext_rt_inst_done = is_rt_inst && mem_ack_i ;
+    assign ext_inst_done_o = ext_isd_ife_inst_done || ext_rt_inst_done ;
+
+    assign sr_shift = reg1_rdata_i >> reg2_rdata_i[4:0];
+    assign sri_shift = reg1_rdata_i >> inst_i[24:20];
+    assign sr_shift_mask = 32'hffffffff >> reg2_rdata_i[4:0];
+    assign sri_shift_mask = 32'hffffffff >> inst_i[24:20];
+
+    assign op1_add_op2_res = is_ife_inst ? ( op1_i + {{20{inst_i[31]}}, inst_i[31:20]} ) : ( op1_i + op2_i );
+    assign op1_jump_add_op2_jump_res = op1_jump_i + op2_jump_i;
+
+    assign reg1_data_invert = ~reg1_rdata_i + 1;
+    assign reg2_data_invert = ~reg2_rdata_i + 1;
+
+    // 有符号数比较
+    assign op1_ge_op2_signed = $signed(op1_i) >= $signed(op2_i);
+    // 无符号数比较
+    assign op1_ge_op2_unsigned = op1_i >= op2_i;
+    assign op1_eq_op2 = (op1_i == op2_i);
+
+
+    assign mem_raddr_index = (reg1_rdata_i + {{20{inst_i[31]}}, inst_i[31:20]}) & 2'b11;
+    assign mem_waddr_index = (reg1_rdata_i + {{20{inst_i[31]}}, inst_i[31:25], inst_i[11:7]}) & 2'b11;
+    assign mem_no_ack_o = ((opcode == `INST_TYPE_L) &&
+                           (mem_raddr_o[31:28] != 4'h0) &&
+                           (mem_raddr_o[31:28] != 4'h1)) ||
+                          ((opcode == `INST_TYPE_S) &&
+                           (mem_waddr_o[31:28] != 4'h0) &&
+                           (mem_waddr_o[31:28] != 4'h1));
+
+    always @(posedge clk) begin
+        if (rst == `RstEnable) begin
+            sid_state <= SID_IDLE;
+            sid_index <= 4'd0;
+        end else begin
+            case (sid_state)
+                SID_IDLE: begin
+                    sid_index <= 4'd0;
+                    if ((ext_inst_start_i == `True) && (is_sid_inst || ife_uart_active)) begin
+                        sid_state <= SID_CTRL_WRITE;
+                    end else begin
+                        sid_state <= SID_IDLE;
+                    end
+                end
+                SID_CTRL_WRITE: begin
+                    sid_state <= SID_DATA_WRITE;
+                end
+                SID_DATA_WRITE: begin
+                    sid_state <= SID_STATUS_READ;
+                end
+                SID_STATUS_READ: begin
+                    if (mem_rdata_i[0] == 1'b0) begin
+                        if (ife_uart_active || (sid_index == 4'd9)) begin
+                            sid_state <= SID_DONE;
+                        end else begin
+                            sid_index <= sid_index + 1'b1;
+                            sid_state <= SID_DATA_WRITE;
+                        end
+                    end else begin
+                        sid_state <= SID_STATUS_READ;
+                    end
+                end
+                SID_DONE: begin
+                    sid_state <= SID_IDLE;
+                    sid_index <= 4'd0;
+                end
+                default: begin
+                    sid_state <= SID_IDLE;
+                    sid_index <= 4'd0;
+                end
+            endcase
+        end
+    end
+
+    assign reg_wdata_o = reg_wdata ;
+    // 响应中断时不写通用寄存器
+    assign reg_we_o = reg_we ;
+    assign reg_waddr_o = reg_waddr ;
+
+    // 响应中断时不写内存
+    assign mem_we_o = mem_we;
+
+    // 响应中断时不向总线请求访问内存
+    assign mem_req_o = mem_req;
+
+    assign hold_flag_o = hold_flag ;
+    assign jump_flag_o = jump_flag ;
+    assign jump_addr_o = jump_addr ;
+
+    // 执行
+    always @ (*) begin
+        reg_we = reg_we_i;
+        reg_waddr = reg_waddr_i;
+        mem_req = `RIB_NREQ;
+
+        case (opcode)
+            `INST_TYPE_I: begin
+                case (funct3)
+                    `INST_ADDI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = op1_add_op2_res;
+                    end
+                    `INST_SLTI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = {32{(~op1_ge_op2_signed)}} & 32'h1;
+                    end
+                    `INST_SLTIU: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = {32{(~op1_ge_op2_unsigned)}} & 32'h1;
+                    end
+                    `INST_XORI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = op1_i ^ op2_i;
+                    end
+                    `INST_ORI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = op1_i | op2_i;
+                    end
+                    `INST_ANDI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = op1_i & op2_i;
+                    end
+                    `INST_SLLI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = reg1_rdata_i << inst_i[24:20];
+                    end
+                    `INST_SRI: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        if (inst_i[30] == 1'b1) begin
+                            reg_wdata = (sri_shift & sri_shift_mask) | ({32{reg1_rdata_i[31]}} & (~sri_shift_mask));
+                        end else begin
+                            reg_wdata = reg1_rdata_i >> inst_i[24:20];
+                        end
+                    end
+                    default: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                    end
+                endcase
+            end
+            `INST_TYPE_R_M: begin
+                if ((funct7 == 7'b0000000) || (funct7 == 7'b0100000)) begin
+                    case (funct3)
+                        `INST_ADD_SUB: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            if (inst_i[30] == 1'b0) begin
+                                reg_wdata = op1_add_op2_res;
+                            end else begin
+                                reg_wdata = op1_i - op2_i;
+                            end
+                        end
+                        `INST_SLL: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = op1_i << op2_i[4:0];
+                        end
+                        `INST_SLT: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = {32{(~op1_ge_op2_signed)}} & 32'h1;
+                        end
+                        `INST_SLTU: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = {32{(~op1_ge_op2_unsigned)}} & 32'h1;
+                        end
+                        `INST_XOR: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = op1_i ^ op2_i;
+                        end
+                        `INST_SR: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            if (inst_i[30] == 1'b1) begin
+                                reg_wdata = (sr_shift & sr_shift_mask) | ({32{reg1_rdata_i[31]}} & (~sr_shift_mask));
+                            end else begin
+                                reg_wdata = reg1_rdata_i >> reg2_rdata_i[4:0];
+                            end
+                        end
+                        `INST_OR: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = op1_i | op2_i;
+                        end
+                        `INST_AND: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = op1_i & op2_i;
+                        end
+                        default: begin
+                            jump_flag = `JumpDisable;
+                            hold_flag = `HoldDisable;
+                            jump_addr = `ZeroWord;
+                            mem_wdata_o = `ZeroWord;
+                            mem_raddr_o = `ZeroWord;
+                            mem_waddr_o = `ZeroWord;
+                            mem_we = `WriteDisable;
+                            reg_wdata = `ZeroWord;
+                        end
+                    endcase
+                end else begin
+                    jump_flag = `JumpDisable;
+                    hold_flag = `HoldDisable;
+                    jump_addr = `ZeroWord;
+                    mem_wdata_o = `ZeroWord;
+                    mem_raddr_o = `ZeroWord;
+                    mem_waddr_o = `ZeroWord;
+                    mem_we = `WriteDisable;
+                    reg_wdata = `ZeroWord;
+                end
+            end
+            `INST_TYPE_L: begin
+                case (funct3)
+                    `INST_LB: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        mem_req = `RIB_REQ;
+                        mem_raddr_o = op1_add_op2_res;
+                        case (mem_raddr_index)
+                            2'b00: begin
+                                reg_wdata = {{24{mem_rdata_i[7]}}, mem_rdata_i[7:0]};
+                            end
+                            2'b01: begin
+                                reg_wdata = {{24{mem_rdata_i[15]}}, mem_rdata_i[15:8]};
+                            end
+                            2'b10: begin
+                                reg_wdata = {{24{mem_rdata_i[23]}}, mem_rdata_i[23:16]};
+                            end
+                            default: begin
+                                reg_wdata = {{24{mem_rdata_i[31]}}, mem_rdata_i[31:24]};
+                            end
+                        endcase
+                    end
+                    `INST_LH: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        mem_req = `RIB_REQ;
+                        mem_raddr_o = op1_add_op2_res;
+                        if (mem_raddr_index == 2'b0) begin
+                            reg_wdata = {{16{mem_rdata_i[15]}}, mem_rdata_i[15:0]};
+                        end else begin
+                            reg_wdata = {{16{mem_rdata_i[31]}}, mem_rdata_i[31:16]};
+                        end
+                    end
+                    `INST_LW: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        mem_req = `RIB_REQ;
+                        mem_raddr_o = op1_add_op2_res;
+                        reg_wdata = mem_rdata_i;
+                    end
+                    `INST_LBU: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        mem_req = `RIB_REQ;
+                        mem_raddr_o = op1_add_op2_res;
+                        case (mem_raddr_index)
+                            2'b00: begin
+                                reg_wdata = {24'h0, mem_rdata_i[7:0]};
+                            end
+                            2'b01: begin
+                                reg_wdata = {24'h0, mem_rdata_i[15:8]};
+                            end
+                            2'b10: begin
+                                reg_wdata = {24'h0, mem_rdata_i[23:16]};
+                            end
+                            default: begin
+                                reg_wdata = {24'h0, mem_rdata_i[31:24]};
+                            end
+                        endcase
+                    end
+                    `INST_LHU: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        mem_req = `RIB_REQ;
+                        mem_raddr_o = op1_add_op2_res;
+                        if (mem_raddr_index == 2'b0) begin
+                            reg_wdata = {16'h0, mem_rdata_i[15:0]};
+                        end else begin
+                            reg_wdata = {16'h0, mem_rdata_i[31:16]};
+                        end
+                    end
+                    default: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                    end
+                endcase
+            end
+            `INST_TYPE_S: begin
+                case (funct3)
+                    `INST_SB: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        reg_wdata = `ZeroWord;
+                        mem_we = `WriteEnable;
+                        mem_req = `RIB_REQ;
+                        mem_waddr_o = op1_add_op2_res;
+                        mem_raddr_o = op1_add_op2_res;
+                        case (mem_waddr_index)
+                            2'b00: begin
+                                mem_wdata_o = {mem_rdata_i[31:8], reg2_rdata_i[7:0]};
+                            end
+                            2'b01: begin
+                                mem_wdata_o = {mem_rdata_i[31:16], reg2_rdata_i[7:0], mem_rdata_i[7:0]};
+                            end
+                            2'b10: begin
+                                mem_wdata_o = {mem_rdata_i[31:24], reg2_rdata_i[7:0], mem_rdata_i[15:0]};
+                            end
+                            default: begin
+                                mem_wdata_o = {reg2_rdata_i[7:0], mem_rdata_i[23:0]};
+                            end
+                        endcase
+                    end
+                    `INST_SH: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        reg_wdata = `ZeroWord;
+                        mem_we = `WriteEnable;
+                        mem_req = `RIB_REQ;
+                        mem_waddr_o = op1_add_op2_res;
+                        mem_raddr_o = op1_add_op2_res;
+                        if (mem_waddr_index == 2'b00) begin
+                            mem_wdata_o = {mem_rdata_i[31:16], reg2_rdata_i[15:0]};
+                        end else begin
+                            mem_wdata_o = {reg2_rdata_i[15:0], mem_rdata_i[15:0]};
+                        end
+                    end
+                    `INST_SW: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        reg_wdata = `ZeroWord;
+                        mem_we = `WriteEnable;
+                        mem_req = `RIB_REQ;
+                        mem_waddr_o = op1_add_op2_res;
+                        mem_raddr_o = op1_add_op2_res;
+                        mem_wdata_o = reg2_rdata_i;
+                    end
+                    default: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                    end
+                endcase
+            end
+            `INST_TYPE_B: begin
+                case (funct3)
+                    `INST_BEQ: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = op1_eq_op2 & `JumpEnable;
+                        jump_addr = {32{op1_eq_op2}} & op1_jump_add_op2_jump_res;
+                    end
+                    `INST_BNE: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = (~op1_eq_op2) & `JumpEnable;
+                        jump_addr = {32{(~op1_eq_op2)}} & op1_jump_add_op2_jump_res;
+                    end
+                    `INST_BLT: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = (~op1_ge_op2_signed) & `JumpEnable;
+                        jump_addr = {32{(~op1_ge_op2_signed)}} & op1_jump_add_op2_jump_res;
+                    end
+                    `INST_BGE: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = (op1_ge_op2_signed) & `JumpEnable;
+                        jump_addr = {32{(op1_ge_op2_signed)}} & op1_jump_add_op2_jump_res;
+                    end
+                    `INST_BLTU: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = (~op1_ge_op2_unsigned) & `JumpEnable;
+                        jump_addr = {32{(~op1_ge_op2_unsigned)}} & op1_jump_add_op2_jump_res;
+                    end
+                    `INST_BGEU: begin
+                        hold_flag = `HoldDisable;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                        jump_flag = (op1_ge_op2_unsigned) & `JumpEnable;
+                        jump_addr = {32{(op1_ge_op2_unsigned)}} & op1_jump_add_op2_jump_res;
+                    end
+                    default: begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                    end
+                endcase
+            end
+            `INST_JAL, `INST_JALR: begin
+                hold_flag = `HoldDisable;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                jump_flag = `JumpEnable;
+                jump_addr = op1_jump_add_op2_jump_res;
+                reg_wdata = op1_add_op2_res;
+            end
+            `INST_LUI, `INST_AUIPC: begin
+                hold_flag = `HoldDisable;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                jump_addr = `ZeroWord;
+                jump_flag = `JumpDisable;
+                reg_wdata = op1_add_op2_res;
+            end
+            `INST_NOP_OP: begin
+                jump_flag = `JumpDisable;
+                hold_flag = `HoldDisable;
+                jump_addr = `ZeroWord;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                reg_wdata = `ZeroWord;
+            end
+            `INST_FENCE: begin
+                hold_flag = `HoldDisable;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                reg_wdata = `ZeroWord;
+                jump_flag = `JumpEnable;
+                jump_addr = op1_jump_add_op2_jump_res;
+            end
+            `INST_EXTEND: begin
+                jump_flag = `JumpDisable;
+                hold_flag = `HoldDisable;
+                jump_addr = `ZeroWord;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                reg_we = `WriteDisable;
+                reg_wdata = `ZeroWord;
+                case ( funct3 )
+                    `INST_SID: begin
+                        // J型指令或者B型指令的跳转信息
+                        jump_flag = `JumpDisable ;
+                        jump_addr = `ZeroWord ;
+                        // 流水线的hold信号
+                        hold_flag = `HoldDisable ;
+                        // 目的寄存器的写入数据，暂时定为0
+                        reg_wdata = `ZeroWord ;
+                        // 对于外设的写入信息
+                        reg_we = `WriteDisable;
+                        mem_we = ((sid_state == SID_CTRL_WRITE) || (sid_state == SID_DATA_WRITE)) ? `WriteEnable : `WriteDisable;
+                        mem_req = ((sid_state == SID_CTRL_WRITE) || (sid_state == SID_DATA_WRITE) || (sid_state == SID_STATUS_READ)) ? `RIB_REQ : `RIB_NREQ;
+                        mem_waddr_o = (sid_state == SID_CTRL_WRITE) ? SID_UART_CTRL_ADDR : SID_UART_TXDATA_ADDR;
+                        mem_raddr_o = SID_UART_STATUS_ADDR;
+                        mem_wdata_o = (sid_state == SID_CTRL_WRITE) ? 32'h1 :
+                                      ((sid_state == SID_DATA_WRITE) ? {24'h0, 4'h3, sid_number_lsb(sid_index)} : `ZeroWord);
+                    end
+                    `INST_RT: begin
+                        // J型指令或者B型指令的跳转信息
+                        jump_flag = `JumpDisable ;
+                        jump_addr = `ZeroWord ;
+                        // 流水线的hold信号
+                        hold_flag = `HoldDisable ;
+                        // 目的寄存器的写入数据，暂时定为0
+                        reg_wdata = { 24'd0, mem_rdata_i[14:7] } ;
+                        // 对于外设的写入信息
+                        reg_we = `WriteEnable;
+                        mem_we = `WriteEnable ;
+                        mem_req = `RIB_REQ ;
+                        mem_waddr_o = IIC_ADDR_REG_ADDR ;
+                        mem_raddr_o = IIC_DATAOUT_REG_ADDR ; 
+                        mem_wdata_o = IIC_LM75_ADDR ;
+                    end
+                    `INST_IFE:begin
+                        // J型指令或者B型指令的跳转信息
+                        jump_flag = `JumpDisable ;
+                        jump_addr = `ZeroWord ;
+                        // 流水线的hold信号
+                        hold_flag = `HoldDisable ;
+                        // 目的寄存器的写入数据，暂时定为0
+                        reg_we = `WriteEnable;
+                        reg_wdata = ife_imm_is_zero ? (op1_ge_op2_unsigned ? `ZeroWord : op1_i) :
+                                                       (op1_i + ife_imm_ext);
+                        mem_we = ((sid_state == SID_CTRL_WRITE) || (sid_state == SID_DATA_WRITE)) ? `WriteEnable : `WriteDisable;
+                        mem_req = ((sid_state == SID_CTRL_WRITE) || (sid_state == SID_DATA_WRITE) || (sid_state == SID_STATUS_READ)) ? `RIB_REQ : `RIB_NREQ;
+                        mem_waddr_o = (sid_state == SID_CTRL_WRITE) ? SID_UART_CTRL_ADDR : SID_UART_TXDATA_ADDR;
+                        mem_raddr_o = SID_UART_STATUS_ADDR;
+                        mem_wdata_o = (sid_state == SID_CTRL_WRITE) ? 32'h1 :
+                                      ((sid_state == SID_DATA_WRITE) ? {24'h0, uart_tx_data} : `ZeroWord);
+                    end
+                    default : begin
+                        jump_flag = `JumpDisable;
+                        hold_flag = `HoldDisable;
+                        jump_addr = `ZeroWord;
+                        mem_wdata_o = `ZeroWord;
+                        mem_raddr_o = `ZeroWord;
+                        mem_waddr_o = `ZeroWord;
+                        mem_we = `WriteDisable;
+                        reg_we = `WriteDisable;
+                        reg_wdata = `ZeroWord;
+                    end
+                endcase
+            end
+            default: begin
+                jump_flag = `JumpDisable;
+                hold_flag = `HoldDisable;
+                jump_addr = `ZeroWord;
+                mem_wdata_o = `ZeroWord;
+                mem_raddr_o = `ZeroWord;
+                mem_waddr_o = `ZeroWord;
+                mem_we = `WriteDisable;
+                reg_wdata = `ZeroWord;
+            end
+        endcase
+    end
+
+endmodule
