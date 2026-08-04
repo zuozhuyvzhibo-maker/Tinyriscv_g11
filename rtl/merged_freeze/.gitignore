@@ -1,0 +1,20 @@
+vcd
+fsdb
+__pycache__/
+*.py[cod]
+
+# Common simulation/Vivado outputs; keep generated products outside the clone.
+*.vcd
+*.fsdb
+*.vvp
+simv
+csrc/
+*.daidir/
+Verdi-UltraLog/
+novas.conf
+.Xil/
+*.jou
+*.log
+server.txt
+.env
+.env.*

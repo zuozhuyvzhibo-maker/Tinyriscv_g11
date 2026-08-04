@@ -1,0 +1,15 @@
+# Vivado-generated project state and transient logs.
+build/
+.Xil/
+*.jou
+*.log
+*.backup.*
+
+# Reproduction outputs; curated summaries use separate, explicitly listed paths.
+verification/vivado_keys/
+verification/vivado_vio/
+verification/vivado_keys_nackfix_*/*.bit
+verification/vivado_keys_nackfix_*/*.ltx
+verification/vcs_pre_sim_*/
+verification/board_keys_*/
+verification/icarus/waves/

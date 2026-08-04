@@ -1,0 +1,5 @@
+﻿"core_id","core_name","status","failure_code","uart_bytes","log"
+"0","LHR","PASS","0","11","core_0.log"
+"1","LDK","PASS","0","11","core_1.log"
+"2","SY","PASS","0","11","core_2.log"
+"3","WJE","PASS","0","11","core_3.log"

@@ -1,0 +1,18 @@
+# Preserve the exact mixed LF/CRLF bytes covered by the 83-file freeze manifest.
+# These inputs are intentionally not subject to core.autocrlf conversion.
+rtl/merged/filelist*.f -text
+rtl/merged/rtl/**/*.v -text
+rtl/merged/fpga/*.tcl -text
+rtl/merged/fpga/constrs/*.xdc -text
+
+# Keep public checksums and cross-platform reproduction assets predictable.
+rtl/merged/scripts/*.sh text eol=lf
+rtl/merged/scripts/*.py text eol=lf
+rtl/merged/scripts/*.ps1 text eol=lf
+rtl/merged/tb/*.v text eol=lf
+rtl/merged/tb/*.vh text eol=lf
+rtl/merged/verification/vivado_keys_nackfix_20260804_140502/source_manifest.sha256 text eol=lf
+rtl/merged/verification/vivado_keys_nackfix_20260804_140502/source_manifest_aggregate.txt text eol=lf
+rtl/lhr/tests/programs/*.data text eol=lf
+rtl/lhr/tests/programs/basic/*.data text eol=lf
+rtl/lhr/tools/tinyriscv_fw_downloader.py text eol=lf

@@ -1,0 +1,500 @@
+{
+  "format": "tinyriscv-one-word-per-line-hex",
+  "validation_profile": "course-rv32i-aligned-jalr-plus-extensions",
+  "image": "all_isa_selfcheck.data",
+  "sha256": "e055558aa14835e33e385fb4d07b8733587298492cae3b00e2c69173e7d71226",
+  "rom": {
+    "capacity_words": 256,
+    "used_words": 251,
+    "free_words": 5,
+    "used_bytes": 1004,
+    "file_words_with_nop_padding": 256,
+    "file_bytes_with_nop_padding": 1024
+  },
+  "ram": {
+    "capacity_words": 16,
+    "used_word_indices": [
+      0,
+      1
+    ],
+    "stack_used": false
+  },
+  "completion": {
+    "pass": {
+      "x26": 1,
+      "x27": 1,
+      "x25": 0,
+      "leds": "all four"
+    },
+    "fail": {
+      "x26": 1,
+      "x27": 0,
+      "x25": "failure_codes key",
+      "uart": "one failure-code byte when IF/UART is usable"
+    }
+  },
+  "expected_success_uart_hex": {
+    "LHR": "32 30 32 33 33 31 30 39 33 36 a5",
+    "LDK": "32 30 32 35 32 31 30 39 30 35 a5",
+    "SY": "32 30 32 35 32 31 30 38 37 30 a5",
+    "WJE": "32 30 32 35 33 31 36 31 39 31 a5"
+  },
+  "lm75_simulation_word": "1900",
+  "lm75_expected_x14": "00000032",
+  "coverage": {
+    "ADD": [
+      {
+        "word_index": 10,
+        "pc": 40,
+        "note": "ADD result check",
+        "word": "002081b3"
+      }
+    ],
+    "SUB": [
+      {
+        "word_index": 14,
+        "pc": 56,
+        "note": "SUB result check",
+        "word": "402081b3"
+      }
+    ],
+    "SLL": [
+      {
+        "word_index": 18,
+        "pc": 72,
+        "note": "SLL result check",
+        "word": "002091b3"
+      }
+    ],
+    "SLT": [
+      {
+        "word_index": 22,
+        "pc": 88,
+        "note": "SLT result check",
+        "word": "0012a1b3"
+      }
+    ],
+    "SLTU": [
+      {
+        "word_index": 26,
+        "pc": 104,
+        "note": "SLTU result check",
+        "word": "0012b1b3"
+      }
+    ],
+    "XOR": [
+      {
+        "word_index": 30,
+        "pc": 120,
+        "note": "XOR result check",
+        "word": "0020c1b3"
+      }
+    ],
+    "SRL": [
+      {
+        "word_index": 34,
+        "pc": 136,
+        "note": "SRL result check",
+        "word": "0022d1b3"
+      }
+    ],
+    "SRA": [
+      {
+        "word_index": 39,
+        "pc": 156,
+        "note": "SRA result check",
+        "word": "4022d1b3"
+      }
+    ],
+    "OR": [
+      {
+        "word_index": 43,
+        "pc": 172,
+        "note": "OR result check",
+        "word": "0020e1b3"
+      }
+    ],
+    "AND": [
+      {
+        "word_index": 47,
+        "pc": 188,
+        "note": "AND result check",
+        "word": "0020f1b3"
+      }
+    ],
+    "ADDI": [
+      {
+        "word_index": 51,
+        "pc": 204,
+        "note": "ADDI immediate result check",
+        "word": "ffb08193"
+      }
+    ],
+    "SLTI": [
+      {
+        "word_index": 55,
+        "pc": 220,
+        "note": "SLTI immediate result check",
+        "word": "ffe2a193"
+      }
+    ],
+    "SLTIU": [
+      {
+        "word_index": 59,
+        "pc": 236,
+        "note": "SLTIU immediate result check",
+        "word": "fff0b193"
+      }
+    ],
+    "XORI": [
+      {
+        "word_index": 63,
+        "pc": 252,
+        "note": "XORI immediate result check",
+        "word": "fff0c193"
+      }
+    ],
+    "ORI": [
+      {
+        "word_index": 67,
+        "pc": 268,
+        "note": "ORI immediate result check",
+        "word": "1200e193"
+      }
+    ],
+    "ANDI": [
+      {
+        "word_index": 71,
+        "pc": 284,
+        "note": "ANDI immediate result check",
+        "word": "0ff2f193"
+      }
+    ],
+    "SLLI": [
+      {
+        "word_index": 75,
+        "pc": 300,
+        "note": "left shift by four",
+        "word": "00409193"
+      }
+    ],
+    "SRLI": [
+      {
+        "word_index": 79,
+        "pc": 316,
+        "note": "logical right shift",
+        "word": "0042d193"
+      }
+    ],
+    "SRAI": [
+      {
+        "word_index": 84,
+        "pc": 336,
+        "note": "arithmetic right shift",
+        "word": "4042d193"
+      }
+    ],
+    "NOP": [
+      {
+        "word_index": 92,
+        "pc": 368,
+        "note": "ADDI x0,x0,0 pseudo-instruction",
+        "word": "00000013"
+      }
+    ],
+    "SW": [
+      {
+        "word_index": 96,
+        "pc": 384,
+        "note": "word store to RAM word 0",
+        "word": "001a2023"
+      }
+    ],
+    "LB": [
+      {
+        "word_index": 97,
+        "pc": 388,
+        "note": "load from RAM byte offset 0",
+        "word": "000a0183"
+      }
+    ],
+    "LBU": [
+      {
+        "word_index": 101,
+        "pc": 404,
+        "note": "load from RAM byte offset 1",
+        "word": "001a4183"
+      }
+    ],
+    "LH": [
+      {
+        "word_index": 105,
+        "pc": 420,
+        "note": "load from RAM byte offset 0",
+        "word": "000a1183"
+      }
+    ],
+    "LHU": [
+      {
+        "word_index": 110,
+        "pc": 440,
+        "note": "load from RAM byte offset 2",
+        "word": "002a5183"
+      }
+    ],
+    "LW": [
+      {
+        "word_index": 115,
+        "pc": 460,
+        "note": "load from RAM byte offset 0",
+        "word": "000a2183"
+      }
+    ],
+    "SB": [
+      {
+        "word_index": 121,
+        "pc": 484,
+        "note": "byte lane 1",
+        "word": "001a00a3"
+      }
+    ],
+    "SH": [
+      {
+        "word_index": 129,
+        "pc": 516,
+        "note": "upper halfword",
+        "word": "001a1123"
+      }
+    ],
+    "BEQ": [
+      {
+        "word_index": 147,
+        "pc": 588,
+        "note": "taken case",
+        "word": "00108463"
+      },
+      {
+        "word_index": 150,
+        "pc": 600,
+        "note": "not-taken case",
+        "word": "14208c63"
+      }
+    ],
+    "BNE": [
+      {
+        "word_index": 152,
+        "pc": 608,
+        "note": "taken case",
+        "word": "00209463"
+      },
+      {
+        "word_index": 155,
+        "pc": 620,
+        "note": "not-taken case",
+        "word": "14109263"
+      }
+    ],
+    "BLT": [
+      {
+        "word_index": 157,
+        "pc": 628,
+        "note": "taken case",
+        "word": "0020c463"
+      },
+      {
+        "word_index": 160,
+        "pc": 640,
+        "note": "not-taken case",
+        "word": "12114863"
+      }
+    ],
+    "BGE": [
+      {
+        "word_index": 162,
+        "pc": 648,
+        "note": "taken case",
+        "word": "00115463"
+      },
+      {
+        "word_index": 165,
+        "pc": 660,
+        "note": "not-taken case",
+        "word": "1020de63"
+      }
+    ],
+    "BLTU": [
+      {
+        "word_index": 167,
+        "pc": 668,
+        "note": "taken case",
+        "word": "00116463"
+      },
+      {
+        "word_index": 170,
+        "pc": 680,
+        "note": "not-taken case",
+        "word": "1020e463"
+      }
+    ],
+    "BGEU": [
+      {
+        "word_index": 172,
+        "pc": 688,
+        "note": "taken case",
+        "word": "0020f463"
+      },
+      {
+        "word_index": 175,
+        "pc": 700,
+        "note": "not-taken case",
+        "word": "0e117a63"
+      }
+    ],
+    "LUI": [
+      {
+        "word_index": 176,
+        "pc": 704,
+        "note": "0x12345 upper immediate",
+        "word": "123451b7"
+      }
+    ],
+    "AUIPC": [
+      {
+        "word_index": 180,
+        "pc": 720,
+        "note": "zero upper, result is PC",
+        "word": "00000197"
+      }
+    ],
+    "JAL": [
+      {
+        "word_index": 185,
+        "pc": 740,
+        "note": "forward transfer and link",
+        "word": "008002ef"
+      }
+    ],
+    "FENCE": [
+      {
+        "word_index": 190,
+        "pc": 760,
+        "note": "predecessor/successor masks are zero",
+        "word": "0000000f"
+      }
+    ],
+    "sID": [
+      {
+        "word_index": 201,
+        "pc": 804,
+        "note": "emit selected core's ten-byte student ID",
+        "word": "0000002f"
+      }
+    ],
+    "rT": [
+      {
+        "word_index": 202,
+        "pc": 808,
+        "note": "read LM75; Icarus checks x14 and bus protocol",
+        "word": "0000172f"
+      }
+    ],
+    "if": [
+      {
+        "word_index": 205,
+        "pc": 820,
+        "note": "non-firing result path: 10+7",
+        "word": "0072a6af"
+      },
+      {
+        "word_index": 218,
+        "pc": 872,
+        "note": "firing path emits UART marker A5",
+        "word": "0002a6af"
+      }
+    ],
+    "JALR": [
+      {
+        "word_index": 223,
+        "pc": 892,
+        "note": "word-aligned source address; verify transfer and link",
+        "word": "00038467"
+      }
+    ]
+  },
+  "failure_codes": {
+    "1": "ADD result",
+    "2": "SUB result",
+    "3": "SLL result",
+    "4": "SLT result",
+    "5": "SLTU result",
+    "6": "XOR result",
+    "7": "SRL result",
+    "8": "SRA result",
+    "9": "OR result",
+    "10": "AND result",
+    "11": "ADDI result",
+    "12": "SLTI result",
+    "13": "SLTIU result",
+    "14": "XORI result",
+    "15": "ORI result",
+    "16": "ANDI result",
+    "17": "SLLI result",
+    "18": "SRLI result",
+    "19": "SRAI result",
+    "20": "x0 hard-wired zero",
+    "21": "LB result/sign extension",
+    "22": "LBU result/sign extension",
+    "23": "LH result/sign extension",
+    "24": "LHU result/sign extension",
+    "25": "LW result/sign extension",
+    "26": "SB byte-lane preservation",
+    "27": "SH halfword-lane preservation",
+    "28": "load-use interlock",
+    "29": "BEQ taken path",
+    "30": "BEQ not-taken path",
+    "31": "BNE taken path",
+    "32": "BNE not-taken path",
+    "33": "BLT taken path",
+    "34": "BLT not-taken path",
+    "35": "BGE taken path",
+    "36": "BGE not-taken path",
+    "37": "BLTU taken path",
+    "38": "BLTU not-taken path",
+    "39": "BGEU taken path",
+    "40": "BGEU not-taken path",
+    "41": "LUI result",
+    "42": "AUIPC PC base",
+    "43": "JAL control transfer",
+    "44": "JAL link register",
+    "45": "execution continued after FENCE",
+    "46": "EX forwarding chain",
+    "47": "if non-firing result",
+    "48": "if firing path clears destination",
+    "49": "JALR aligned target address",
+    "50": "JALR link register"
+  },
+  "semantic_checks": [
+    "every retained RV32I instruction executes at least once",
+    "all six branches execute taken and not-taken cases",
+    "signed/unsigned subword loads and byte/halfword store lanes",
+    "x0 immutability, EX forwarding, and direct load-use dependency",
+    "JAL/JALR aligned targets and link values",
+    "sID byte stream, rT LM75 protocol/value, and IF fire/no-fire paths"
+  ],
+  "not_in_project_isa": [
+    "M extension",
+    "A extension",
+    "C extension",
+    "floating point",
+    "CSR instructions",
+    "ECALL/EBREAK",
+    "interrupt/exception return",
+    "FENCE.I/Zifencei"
+  ],
+  "notes": [
+    "One image is downloaded once and reused while the four cores are selected in turn.",
+    "The firmware cannot self-verify sID bytes or the physical LM75 transaction; the companion Icarus testbench verifies them externally.",
+    "On a board, success requires the LM75 to acknowledge. A valid temperature of zero is not treated as an error.",
+    "Course-scope JALR testing uses word-aligned targets; the known upstream bit-zero deviation is documented but is not a pass gate for this image."
+  ]
+}

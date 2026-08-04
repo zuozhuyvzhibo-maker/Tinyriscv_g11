@@ -1,0 +1,503 @@
+ /*
+ Copyright 2020 Blue Liang, liangkangnan@163.com
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+
+
+
+`ifdef IVERILOG_FAST_SIM
+`define SHDBG_UART_BAUD_115200        32'h8
+`else
+`define SHDBG_UART_BAUD_115200        32'h1B8
+`endif
+
+
+`define SHDBG_UART_CTRL_REG           32'h30000000
+`define SHDBG_UART_STATUS_REG         32'h30000004
+`define SHDBG_UART_BAUD_REG           32'h30000008
+`define SHDBG_UART_TX_REG             32'h3000000c
+`define SHDBG_UART_RX_REG             32'h30000010
+
+`define SHDBG_UART_TX_BUSY_FLAG       32'h1
+`define SHDBG_UART_RX_OVER_FLAG       32'h2
+
+
+//`define UART_FIRST_PACKET_LEN   8'd131
+`define SHDBG_UART_FIRST_PACKET_LEN   8'd35
+
+//`define UART_REMAIN_PACKET_LEN  8'd131
+`define SHDBG_UART_REMAIN_PACKET_LEN  8'd35
+`define SHDBG_UART_RESP_ACK           32'h6
+`define SHDBG_UART_RESP_NAK           32'h15
+
+
+`define SHDBG_ROM_START_ADDR          32'h0
+
+
+
+// SHARED-prefixed private RTL module for the four-core integration.
+module shared_uart_debug(
+
+    input wire clk,
+    input wire rst,
+
+    input wire debug_en_i,
+
+    output wire req_o,
+    output reg mem_we_o,
+    output reg[31:0] mem_addr_o,
+    output reg[31:0] mem_wdata_o,
+    input wire[31:0] mem_rdata_i,
+    input wire mem_busy_i          // NEW: bridge busy backpressure for paced ROM writes
+
+    );
+
+
+
+    localparam S_IDLE                    = 14'h0001;
+    localparam S_INIT_UART_BAUD          = 14'h0002;
+    localparam S_CLEAR_UART_RX_OVER_FLAG = 14'h0004;
+    localparam S_WAIT_BYTE               = 14'h0008;
+    localparam S_WAIT_BYTE2              = 14'h0010;
+    localparam S_GET_BYTE                = 14'h0020;
+    localparam S_REC_FIRST_PACKET        = 14'h0040;
+    localparam S_REC_REMAIN_PACKET       = 14'h0080;
+    localparam S_SEND_ACK                = 14'h0100;
+    localparam S_SEND_NAK                = 14'h0200;
+    localparam S_CRC_START               = 14'h0400;
+    localparam S_CRC_CALC                = 14'h0800;
+    localparam S_CRC_END                 = 14'h1000;
+    localparam S_WRITE_MEM               = 14'h2000;
+    localparam WRITE_MEM_IDLE_ADDR       = 32'hf0000000; // NEW: park on an unmapped address between ROM writes to avoid duplicate bridge starts
+    // The shared FPGA ROM contains exactly 256 32-bit words. The
+    // word budget below suppresses writes from the legacy padded packet,
+    // allowing all 1024 bytes without accessing word 256.
+    localparam [31:0] MAX_IMAGE_BYTES = 32'd1024;
+
+    reg[13:0] state;
+
+
+    reg[7:0] rx_data[0:34];
+    reg[7:0] rec_bytes_index;
+    reg[7:0] need_to_rec_bytes;
+    reg[15:0] remain_packet_count;
+    reg[31:0] fw_file_size;
+    reg[31:0] write_mem_addr;
+    reg[31:0] write_mem_data;
+    reg[8:0] write_words_remaining; // ceil(file_size / 4), maximum 256 words
+    reg[7:0] write_mem_byte_index0;
+    reg[7:0] write_mem_byte_index1;
+    reg[7:0] write_mem_byte_index2;
+    reg[7:0] write_mem_byte_index3;
+    reg write_mem_busy_seen;       // NEW: records that bridge has accepted the current ROM write
+
+    reg[15:0] crc_result;
+    reg[3:0] crc_bit_index;
+    reg[7:0] crc_byte_index;
+
+    wire write_mem_advance = (state == S_WRITE_MEM) &&
+                             (write_mem_busy_seen == 1'b1) &&
+                             (mem_busy_i == 1'b0); // NEW: advance only after bridge busy rises and then falls
+
+
+
+    assign req_o = (rst == 1'b1 && debug_en_i == 1'b1)? 1'b1: 1'b0;
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            mem_addr_o <= 32'h0;
+            mem_we_o <= 1'b0;
+            mem_wdata_o <= 32'h0;
+            state <= S_IDLE;
+            remain_packet_count <= 16'h0;
+            write_mem_busy_seen <= 1'b0; // NEW: reset ROM write busy tracker
+        end else begin
+            if (state != S_WRITE_MEM) begin
+                write_mem_busy_seen <= 1'b0; // NEW: do not carry a stale busy observation into the next packet
+            end
+            case (state)
+                S_IDLE: begin
+                    mem_addr_o <= `SHDBG_UART_CTRL_REG;
+                    mem_wdata_o <= 32'h3;
+                    mem_we_o <= 1'b1;
+                    state <= S_INIT_UART_BAUD;
+                end
+                S_INIT_UART_BAUD: begin
+                    mem_addr_o <= `SHDBG_UART_BAUD_REG;
+                    mem_wdata_o <= `SHDBG_UART_BAUD_115200;
+                    mem_we_o <= 1'b1;
+                    state <= S_REC_FIRST_PACKET;
+                end
+                S_REC_FIRST_PACKET: begin
+                    remain_packet_count <= 16'h0;
+                    mem_addr_o <= WRITE_MEM_IDLE_ADDR; // CHANGE: req_o stays high, so park on unmapped address when no bus access is intended
+                    mem_we_o <= 1'b0;
+                    mem_wdata_o <= 32'h0;
+                    state <= S_CLEAR_UART_RX_OVER_FLAG;
+                end
+                S_REC_REMAIN_PACKET: begin
+                    mem_addr_o <= WRITE_MEM_IDLE_ADDR; // CHANGE: avoid a stray ROM read before receiving the next UART packet
+                    mem_we_o <= 1'b0;
+                    mem_wdata_o <= 32'h0;
+                    state <= S_CLEAR_UART_RX_OVER_FLAG;
+                end
+                S_CLEAR_UART_RX_OVER_FLAG: begin
+                    mem_addr_o <= `SHDBG_UART_STATUS_REG;
+                    mem_wdata_o <= 32'h0;
+                    mem_we_o <= 1'b1;
+                    state <= S_WAIT_BYTE;
+                end
+                S_WAIT_BYTE: begin
+                    mem_addr_o <= `SHDBG_UART_STATUS_REG;
+                    mem_wdata_o <= 32'h0;
+                    mem_we_o <= 1'b0;
+                    state <= S_WAIT_BYTE2;
+                end
+                S_WAIT_BYTE2: begin
+                    if ((mem_rdata_i & `SHDBG_UART_RX_OVER_FLAG) == `SHDBG_UART_RX_OVER_FLAG) begin
+                        mem_addr_o <= `SHDBG_UART_RX_REG;
+                        mem_wdata_o <= 32'h0;
+                        mem_we_o <= 1'b0;
+                        state <= S_GET_BYTE;
+                    end
+                end
+                S_GET_BYTE: begin
+                    if (rec_bytes_index == (need_to_rec_bytes - 1'b1)) begin
+                        state <= S_CRC_START;
+                    end else begin
+                        state <= S_CLEAR_UART_RX_OVER_FLAG;
+                    end
+                end
+                S_CRC_START: begin
+                    state <= S_CRC_CALC;
+                end
+                S_CRC_CALC: begin
+                    if ((crc_byte_index == need_to_rec_bytes - 2) && crc_bit_index == 4'h8) begin
+                        state <= S_CRC_END;
+                    end
+                end
+                S_CRC_END: begin
+                    if (crc_result == {rx_data[need_to_rec_bytes - 1], rx_data[need_to_rec_bytes - 2]}) begin
+                        if (need_to_rec_bytes == `SHDBG_UART_FIRST_PACKET_LEN && remain_packet_count == 16'h0) begin
+                            if (fw_file_size <= MAX_IMAGE_BYTES) begin
+                                remain_packet_count <= {5'h0, fw_file_size[31:5]} + 1'b1;
+                                state <= S_SEND_ACK;
+                            end else begin
+                                remain_packet_count <= 16'h0;
+                                state <= S_SEND_NAK;
+                            end
+                        end else begin
+                            remain_packet_count <= remain_packet_count - 1'b1;
+                            state <= S_WRITE_MEM;
+                        end
+                    end else begin
+                        state <= S_SEND_NAK;
+                    end
+                end
+                S_WRITE_MEM: begin
+                    if ((write_words_remaining == 9'd0) ||
+                        (write_mem_byte_index0 == (need_to_rec_bytes + 2))) begin
+                        mem_addr_o <= WRITE_MEM_IDLE_ADDR; // CHANGE: leave ROM/RAM bridge path before ACK because req_o stays high in debug mode
+                        mem_wdata_o <= 32'h0;             // CHANGE: clear write data after the packet write phase
+                        mem_we_o <= 1'b0;                 // CHANGE: drop write enable after the packet write phase
+                        write_mem_busy_seen <= 1'b0;      // NEW: packet write phase is done
+                        state <= S_SEND_ACK;
+                    end else if (write_mem_advance == 1'b1) begin
+                        mem_addr_o <= WRITE_MEM_IDLE_ADDR; // NEW: one-cycle unmapped gap prevents bridge from re-sampling the old ROM word
+                        mem_wdata_o <= 32'h0;             // NEW: do not expose stale ROM write data during the gap
+                        mem_we_o <= 1'b0;                 // NEW: no write is intended during the gap
+                        write_mem_busy_seen <= 1'b0;      // NEW: next cycle will present the next word and wait for busy again
+                    end else begin
+                        mem_addr_o <= write_mem_addr;
+                        mem_wdata_o <= write_mem_data;
+                        mem_we_o <= 1'b1;
+                        if ((write_mem_busy_seen == 1'b0) && (mem_busy_i == 1'b1)) begin
+                            write_mem_busy_seen <= 1'b1;  // NEW: bridge has seen this word; hold it until busy returns low
+                        end
+                    end
+                end
+                S_SEND_ACK: begin
+                    mem_addr_o <= `SHDBG_UART_TX_REG;
+                    mem_wdata_o <= `SHDBG_UART_RESP_ACK;
+                    mem_we_o <= 1'b1;
+                    if (remain_packet_count > 0) begin
+                        state <= S_REC_REMAIN_PACKET;
+                    end else begin
+                        state <= S_REC_FIRST_PACKET;
+                    end
+                end
+                S_SEND_NAK: begin
+                    mem_addr_o <= `SHDBG_UART_TX_REG;
+                    mem_wdata_o <= `SHDBG_UART_RESP_NAK;
+                    mem_we_o <= 1'b1;
+                    if (remain_packet_count > 0) begin
+                        state <= S_REC_REMAIN_PACKET;
+                    end else begin
+                        state <= S_REC_FIRST_PACKET;
+                    end
+                end
+            endcase
+        end
+    end
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            need_to_rec_bytes <= 8'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    need_to_rec_bytes <= `SHDBG_UART_FIRST_PACKET_LEN;
+                end
+                S_REC_REMAIN_PACKET: begin
+                    need_to_rec_bytes <= `SHDBG_UART_REMAIN_PACKET_LEN;
+                end
+            endcase
+        end
+    end
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            rec_bytes_index <= 8'h0;
+        end else begin
+            case (state)
+                S_GET_BYTE: begin
+                    rx_data[rec_bytes_index] <= mem_rdata_i[7:0];
+                    rec_bytes_index <= rec_bytes_index + 1'b1;
+                end
+                S_REC_FIRST_PACKET: begin
+                    rec_bytes_index <= 8'h0;
+                end
+                S_REC_REMAIN_PACKET: begin
+                    rec_bytes_index <= 8'h0;
+                end
+            endcase
+        end
+    end
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            fw_file_size <= 32'h0;
+        end else begin
+            case (state)
+                S_CRC_START: begin
+                    fw_file_size <= {rx_data[25], rx_data[26], rx_data[27], rx_data[28]};
+                end
+            endcase
+        end
+    end
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_addr <= 32'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_addr <= `SHDBG_ROM_START_ADDR;
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        write_mem_addr <= write_mem_addr + 4; // CHANGE: advance address only after current bridge write completes
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_data <= 32'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_data <= 32'h0;
+                end
+                S_CRC_END: begin
+                    write_mem_data <= {rx_data[4], rx_data[3], rx_data[2], rx_data[1]};
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        // Do not evaluate indices 35/36 after the eighth word.
+                        if ((write_words_remaining > 9'd1) &&
+                            (write_mem_byte_index3 <= 8'd32)) begin
+                            write_mem_data <= {rx_data[write_mem_byte_index3], rx_data[write_mem_byte_index2], rx_data[write_mem_byte_index1], rx_data[write_mem_byte_index0]};
+                        end else begin
+                            write_mem_data <= 32'h0;
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_words_remaining <= 9'd0;
+        end else if ((state == S_CRC_END) &&
+                     (remain_packet_count == 16'h0) &&
+                     (crc_result == {rx_data[need_to_rec_bytes - 1],
+                                     rx_data[need_to_rec_bytes - 2]})) begin
+            write_words_remaining <= (fw_file_size + 32'd3) >> 2;
+        end else if (write_mem_advance && (write_words_remaining != 9'd0)) begin
+            write_words_remaining <= write_words_remaining - 1'b1;
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_byte_index0 <= 8'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_byte_index0 <= 8'h0;
+                end
+                S_CRC_END: begin
+                    write_mem_byte_index0 <= 8'h5;
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        write_mem_byte_index0 <= write_mem_byte_index0 + 4; // CHANGE: byte pointer advances once per completed bridge write
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_byte_index1 <= 8'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_byte_index1 <= 8'h0;
+                end
+                S_CRC_END: begin
+                    write_mem_byte_index1 <= 8'h6;
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        write_mem_byte_index1 <= write_mem_byte_index1 + 4; // CHANGE: byte pointer advances once per completed bridge write
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_byte_index2 <= 8'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_byte_index2 <= 8'h0;
+                end
+                S_CRC_END: begin
+                    write_mem_byte_index2 <= 8'h7;
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        write_mem_byte_index2 <= write_mem_byte_index2 + 4; // CHANGE: byte pointer advances once per completed bridge write
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            write_mem_byte_index3 <= 8'h0;
+        end else begin
+            case (state)
+                S_REC_FIRST_PACKET: begin
+                    write_mem_byte_index3 <= 8'h0;
+                end
+                S_CRC_END: begin
+                    write_mem_byte_index3 <= 8'h8;
+                end
+                S_WRITE_MEM: begin
+                    if (write_mem_advance == 1'b1) begin
+                        write_mem_byte_index3 <= write_mem_byte_index3 + 4; // CHANGE: byte pointer advances once per completed bridge write
+                    end
+                end
+            endcase
+        end
+    end
+
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            crc_result <= 16'h0;
+        end else begin
+            case (state)
+                S_CRC_START: begin
+                    crc_result <= 16'hffff;
+                end
+                S_CRC_CALC: begin
+                    if (crc_bit_index == 4'h0) begin
+                        crc_result <= crc_result ^ rx_data[crc_byte_index];
+                    end else begin
+                        if (crc_bit_index < 4'h9) begin
+                            if (crc_result[0] == 1'b1) begin
+                                crc_result <= {1'b0, crc_result[15:1]} ^ 16'ha001;
+                            end else begin
+                                crc_result <= {1'b0, crc_result[15:1]};
+                            end
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            crc_bit_index <= 4'h0;
+        end else begin
+            case (state)
+                S_CRC_START: begin
+                    crc_bit_index <= 4'h0;
+                end
+                S_CRC_CALC: begin
+                    if (crc_bit_index < 4'h9) begin
+                        crc_bit_index <= crc_bit_index + 1'b1;
+                    end else begin
+                        crc_bit_index <= 4'h0;
+                    end
+                end
+            endcase
+        end
+    end
+
+    always @ (posedge clk) begin
+        if (rst == 1'b0 || debug_en_i == 1'b0) begin
+            crc_byte_index <= 8'h0;
+        end else begin
+            case (state)
+                S_CRC_START: begin
+                    crc_byte_index <= 8'h1;
+                end
+                S_CRC_CALC: begin
+                    if (crc_bit_index == 4'h0) begin
+                        crc_byte_index <= crc_byte_index + 1'b1;
+                    end
+                end
+            endcase
+        end
+    end
+
+endmodule

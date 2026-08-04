@@ -1,0 +1,5 @@
+Vivado 2019.1 shared-memory inference evidence
+Source manifest aggregate: 86C8634566E391F8EC9BD7226131453539E3779F9139C228E880B96D4CFE769A
+
+|tinyriscv_merged_fpga_key_top | u_bridge_bank/u_shared_memory/rom_mem_reg | Implied   | 256 x 32             | RAM256X1S x 32   |
+|tinyriscv_merged_fpga_key_top | u_bridge_bank/u_shared_memory/ram_mem_reg | Implied   | 16 x 32              | RAM32M x 6       |

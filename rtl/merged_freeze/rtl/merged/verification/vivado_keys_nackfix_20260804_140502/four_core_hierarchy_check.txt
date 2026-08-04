@@ -1,0 +1,5 @@
+u_lhr_tile cells=3427
+u_ldk_tile cells=3351
+u_sy_tile cells=3135
+u_wje_tile cells=3203
+all_four_tiles_present=1
