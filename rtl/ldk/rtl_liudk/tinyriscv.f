@@ -26,5 +26,4 @@ $DESIGN_PATH/rtl_deleted/utils/full_handshake_tx.v
 $DESIGN_PATH/rtl_deleted/utils/gen_buf.v
 $DESIGN_PATH/rtl_deleted/utils/gen_dff.v
 $DESIGN_PATH/tb/compliance_test/tinyriscv_soc_tb.v
-$DESIGN_PATH/tb/tinyriscv_soc_tb.v
 

@@ -1,0 +1,3 @@
+TEST_BEGIN chip_sel=1 kind=PWM mem=rtl_tomerge/rtl/merge_version/lhr/tests/programs/PWM_inst.data words=167 max_cycles=700000
+TEST_PASS chip_sel=1 kind=PWM cycles=1151 seen_high=0xf seen_low=0xf pwm_o=0xf x14=0x0000000f
+D:\liudk\project\tinyriscv_dk\tinyriscv\rtl_tomerge\rtl\merge_version\tb\tinyriscv_merge_validation_tb.v:325: $finish called at 23230000 (1ps)

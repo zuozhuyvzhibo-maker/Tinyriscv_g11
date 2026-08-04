@@ -1,0 +1,4 @@
+TEST_BEGIN chip_sel=2 kind=RT mem=liudk_test/temp_test/Temp.data words=152 max_cycles=3000000
+UART_TX chip_sel=2 cycle=826718 index=0 byte=0x19
+FATAL: rtl_tomerge\rtl\merge_version\tb\tinyriscv_merge_validation_tb.v:293: TEST_TIMEOUT chip_sel=2 kind=RT cycles=3000000 x14=0x00000019 x26=0x00000001 x27=0x00000000 uart_count=1 pwm_seen_high=0x0 pwm_seen_low=0xf
+       Time: 60000210000  Scope: tinyriscv_merge_validation_tb

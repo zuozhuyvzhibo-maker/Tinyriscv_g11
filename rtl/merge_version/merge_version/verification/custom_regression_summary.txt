@@ -1,0 +1,18 @@
+
+ChipSel Test     Kind  Pass Exit Log                                                                      
+------- ----     ----  ---- ---- ---                                                                      
+      0 sID_inst SID   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel0_sID_inst.log
+      0 IF_inst  IF    True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel0_IF_inst.log 
+      0 Temp     RT    True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel0_Temp.log    
+      0 PWM_inst PWM   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel0_PWM_inst.log
+      1 sID_inst SID   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel1_sID_inst.log
+      1 IF_inst  IF    True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel1_IF_inst.log 
+      1 Temp     RT    True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel1_Temp.log    
+      1 PWM_inst PWM   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel1_PWM_inst.log
+      2 sID_inst SID   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel2_sID_inst.log
+      2 IF_inst  IF    True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel2_IF_inst.log 
+      2 Temp     RT   False    1 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel2_Temp.log    
+      2 PWM_inst PWM   True    0 rtl_tomerge\rtl\merge_version\verification\logs\custom2_sel2_PWM_inst.log
+
+
+

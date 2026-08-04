@@ -1,0 +1,4 @@
+TEST_BEGIN chip_sel=1 kind=RT mem=liudk_test/temp_test/Temp.data words=152 max_cycles=3000000
+UART_TX chip_sel=1 cycle=29976 index=0 byte=0x32
+TEST_PASS chip_sel=1 kind=RT cycles=29976 uart=0x32 x14=0x00000032
+rtl_tomerge\rtl\merge_version\tb\tinyriscv_merge_validation_tb.v:229: $finish called at 599730000 (1ps)

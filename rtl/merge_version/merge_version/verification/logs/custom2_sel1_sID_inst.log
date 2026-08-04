@@ -1,0 +1,13 @@
+TEST_BEGIN chip_sel=1 kind=SID mem=rtl_tomerge/rtl/merge_version/lhr/tests/programs/sID_inst.data words=146 max_cycles=3000000
+UART_TX chip_sel=1 cycle=752 index=0 byte=0x32
+UART_TX chip_sel=1 cycle=5166 index=1 byte=0x30
+UART_TX chip_sel=1 cycle=9580 index=2 byte=0x32
+UART_TX chip_sel=1 cycle=13994 index=3 byte=0x35
+UART_TX chip_sel=1 cycle=18408 index=4 byte=0x32
+UART_TX chip_sel=1 cycle=22822 index=5 byte=0x31
+UART_TX chip_sel=1 cycle=27236 index=6 byte=0x30
+UART_TX chip_sel=1 cycle=31650 index=7 byte=0x39
+UART_TX chip_sel=1 cycle=36064 index=8 byte=0x30
+UART_TX chip_sel=1 cycle=40478 index=9 byte=0x35
+TEST_PASS chip_sel=1 kind=SID cycles=40478 bytes=2023310936
+rtl_tomerge\rtl\merge_version\tb\tinyriscv_merge_validation_tb.v:211: $finish called at 809770000 (1ps)

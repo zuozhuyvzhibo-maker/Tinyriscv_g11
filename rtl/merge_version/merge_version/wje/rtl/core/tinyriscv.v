@@ -1,0 +1,263 @@
+ /*
+ Copyright 2019 Blue Liang, liangkangnan@163.com
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+
+`include "../core/defines.v"
+
+// wje_tinyriscv处理器核顶层模块
+// 注:已删除 CSR/CLINT/异常中断、M扩展(乘除法)。保留 JTAG(待阶段B再评估)、自定义扩展指令通路
+module wje_tinyriscv(
+
+    input wire clk,
+    input wire rst,
+
+    output wire sid_start_o,
+    input wire sid_busy_i,
+    output wire if_uart_start_o,
+    output wire[7:0] if_uart_data_o,
+    input wire if_uart_busy_i,
+
+    output wire temp_start_o,
+    output wire temp_hold_o,
+    input wire temp_busy_i,
+    input wire temp_done_i,
+    input wire temp_ack_error_i,
+    input wire[15:0] temp_raw_i,
+
+    output wire[`MemAddrBus] rib_ex_addr_o,    // 读、写外设的地址
+    input wire[`MemBus] rib_ex_data_i,         // 从外设读取的数据
+    output wire[`MemBus] rib_ex_data_o,        // 写入外设的数据
+    output wire rib_ex_req_o,                  // 访问外设请求
+    output wire rib_ex_we_o,                   // 写外设标志
+
+    output wire[`MemAddrBus] rib_pc_addr_o,    // 取指地址
+    input wire[`MemBus] rib_pc_data_i,         // 取到的指令内容
+
+    input wire rib_hold_flag_i,                // 总线暂停标志
+    input wire rib_mem_busy_i                  // SoC 顶层传入的 wje_bridge busy 信号
+
+    );
+
+    // wje_pc_reg模块输出信号
+	wire[`InstAddrBus] pc_pc_o;
+
+    // wje_if_id模块输出信号
+	wire[`InstBus] if_inst_o;
+	wire[`InstAddrBus] if_inst_addr_o;
+
+    // wje_id模块输出信号
+	wire[`RegAddrBus] id_reg1_raddr_o;
+	wire[`RegAddrBus] id_reg2_raddr_o;
+	wire[`InstBus] id_inst_o;
+	wire[`InstAddrBus] id_inst_addr_o;
+	wire[`RegBus] id_reg1_rdata_o;
+	wire[`RegBus] id_reg2_rdata_o;
+	wire id_reg_we_o;
+	wire[`RegAddrBus] id_reg_waddr_o;
+	wire[`MemAddrBus] id_op1_o;
+	wire[`MemAddrBus] id_op2_o;
+	wire[`MemAddrBus] id_op1_jump_o;
+	wire[`MemAddrBus] id_op2_jump_o;
+
+    // wje_id_ex模块输出信号
+	wire[`InstBus] ie_inst_o;
+	wire[`InstAddrBus] ie_inst_addr_o;
+	wire ie_reg_we_o;
+	wire[`RegAddrBus] ie_reg_waddr_o;
+	wire[`RegBus] ie_reg1_rdata_o;
+	wire[`RegBus] ie_reg2_rdata_o;
+	wire[`MemAddrBus] ie_op1_o;
+	wire[`MemAddrBus] ie_op2_o;
+	wire[`MemAddrBus] ie_op1_jump_o;
+	wire[`MemAddrBus] ie_op2_jump_o;
+
+    // wje_ex模块输出信号
+	wire[`MemBus] ex_mem_wdata_o;
+	wire[`MemAddrBus] ex_mem_raddr_o;
+	wire[`MemAddrBus] ex_mem_waddr_o;
+	wire ex_mem_we_o;
+	wire ex_mem_req_o;
+	wire[`RegBus] ex_reg_wdata_o;
+	wire ex_reg_we_o;
+	wire[`RegAddrBus] ex_reg_waddr_o;
+	wire ex_hold_flag_o;
+	wire ex_jump_flag_o;
+	wire[`InstAddrBus] ex_jump_addr_o;
+	wire ex_temp_start_o;
+	wire ex_temp_hold_o;
+	wire ex_if_uart_start_o;
+	wire[7:0] ex_if_uart_data_o;
+	wire ex_if_uart_hold_o;
+
+    // wje_regs模块输出信号
+	wire[`RegBus] regs_rdata1_o;
+	wire[`RegBus] regs_rdata2_o;
+
+    // wje_ctrl模块输出信号
+	wire[`Hold_Flag_Bus] ctrl_hold_flag_o;
+	wire ctrl_jump_flag_o;
+	wire[`InstAddrBus] ctrl_jump_addr_o;
+
+
+    assign rib_ex_addr_o = (ex_mem_we_o == `WriteEnable)? ex_mem_waddr_o: ex_mem_raddr_o;
+    assign rib_ex_data_o = ex_mem_wdata_o;
+    assign rib_ex_req_o = ex_mem_req_o;
+    assign rib_ex_we_o = ex_mem_we_o;
+
+    assign rib_pc_addr_o = pc_pc_o;
+    assign temp_start_o = ex_temp_start_o;
+    assign temp_hold_o = ex_temp_hold_o;
+    assign if_uart_start_o = ex_if_uart_start_o;
+    assign if_uart_data_o = ex_if_uart_data_o;
+
+
+    // wje_pc_reg模块例化
+    wje_pc_reg u_pc_reg(
+        .clk(clk),
+        .rst(rst),
+        .pc_o(pc_pc_o),
+        .hold_flag_i(ctrl_hold_flag_o),
+        .jump_flag_i(ctrl_jump_flag_o),
+        .jump_addr_i(ctrl_jump_addr_o)
+    );
+
+    // wje_ctrl模块例化
+    wje_ctrl u_ctrl(
+        .rst(rst),
+        .jump_flag_i(ex_jump_flag_o),
+        .jump_addr_i(ex_jump_addr_o),
+        .hold_flag_ex_i(ex_hold_flag_o),
+        .hold_flag_temp_i(ex_temp_hold_o | ex_if_uart_hold_o),
+        .hold_flag_rib_i(rib_hold_flag_i),
+        .hold_flag_mem_i(rib_mem_busy_i),       //把 wje_bridge busy 送入 wje_ctrl 生成流水线暂停
+        .hold_flag_o(ctrl_hold_flag_o),
+        .jump_flag_o(ctrl_jump_flag_o),
+        .jump_addr_o(ctrl_jump_addr_o)
+    );
+
+    // wje_regs模块例化
+    wje_regs u_regs(
+        .clk(clk),
+        .rst(rst),
+        .we_i(ex_reg_we_o),
+        .waddr_i(ex_reg_waddr_o),
+        .wdata_i(ex_reg_wdata_o),
+        .raddr1_i(id_reg1_raddr_o),
+        .rdata1_o(regs_rdata1_o),
+        .raddr2_i(id_reg2_raddr_o),
+        .rdata2_o(regs_rdata2_o)
+    );
+
+    // wje_if_id模块例化
+    wje_if_id u_if_id(
+        .clk(clk),
+        .rst(rst),
+        .inst_i(rib_pc_data_i),
+        .inst_addr_i(pc_pc_o),
+        .hold_flag_i(ctrl_hold_flag_o),
+        .inst_o(if_inst_o),
+        .inst_addr_o(if_inst_addr_o)
+    );
+
+    // wje_id模块例化
+    wje_id u_id(
+        .rst(rst),
+        .inst_i(if_inst_o),
+        .inst_addr_i(if_inst_addr_o),
+        .reg1_rdata_i(regs_rdata1_o),
+        .reg2_rdata_i(regs_rdata2_o),
+        .ex_jump_flag_i(ex_jump_flag_o),
+        .reg1_raddr_o(id_reg1_raddr_o),
+        .reg2_raddr_o(id_reg2_raddr_o),
+        .inst_o(id_inst_o),
+        .inst_addr_o(id_inst_addr_o),
+        .reg1_rdata_o(id_reg1_rdata_o),
+        .reg2_rdata_o(id_reg2_rdata_o),
+        .reg_we_o(id_reg_we_o),
+        .reg_waddr_o(id_reg_waddr_o),
+        .op1_o(id_op1_o),
+        .op2_o(id_op2_o),
+        .op1_jump_o(id_op1_jump_o),
+        .op2_jump_o(id_op2_jump_o)
+    );
+
+    // wje_id_ex模块例化
+    wje_id_ex u_id_ex(
+        .clk(clk),
+        .rst(rst),
+        .inst_i(id_inst_o),
+        .inst_addr_i(id_inst_addr_o),
+        .reg_we_i(id_reg_we_o),
+        .reg_waddr_i(id_reg_waddr_o),
+        .reg1_rdata_i(id_reg1_rdata_o),
+        .reg2_rdata_i(id_reg2_rdata_o),
+        .hold_flag_i(ctrl_hold_flag_o),
+        .inst_o(ie_inst_o),
+        .inst_addr_o(ie_inst_addr_o),
+        .reg_we_o(ie_reg_we_o),
+        .reg_waddr_o(ie_reg_waddr_o),
+        .reg1_rdata_o(ie_reg1_rdata_o),
+        .reg2_rdata_o(ie_reg2_rdata_o),
+        .op1_i(id_op1_o),
+        .op2_i(id_op2_o),
+        .op1_jump_i(id_op1_jump_o),
+        .op2_jump_i(id_op2_jump_o),
+        .op1_o(ie_op1_o),
+        .op2_o(ie_op2_o),
+        .op1_jump_o(ie_op1_jump_o),
+        .op2_jump_o(ie_op2_jump_o)
+    );
+
+    // wje_ex模块例化
+    wje_ex u_ex(
+        .rst(rst),
+        .inst_i(ie_inst_o),
+        .inst_addr_i(ie_inst_addr_o),
+        .reg_we_i(ie_reg_we_o),
+        .reg_waddr_i(ie_reg_waddr_o),
+        .reg1_rdata_i(ie_reg1_rdata_o),
+        .reg2_rdata_i(ie_reg2_rdata_o),
+        .op1_i(ie_op1_o),
+        .op2_i(ie_op2_o),
+        .op1_jump_i(ie_op1_jump_o),
+        .op2_jump_i(ie_op2_jump_o),
+        .mem_rdata_i(rib_ex_data_i),
+        .mem_wdata_o(ex_mem_wdata_o),
+        .mem_raddr_o(ex_mem_raddr_o),
+        .mem_waddr_o(ex_mem_waddr_o),
+        .mem_we_o(ex_mem_we_o),
+        .mem_req_o(ex_mem_req_o),
+        .sid_busy_i(sid_busy_i),
+        .if_uart_busy_i(if_uart_busy_i),
+        .temp_busy_i(temp_busy_i),
+        .temp_done_i(temp_done_i),
+        .temp_ack_error_i(temp_ack_error_i),
+        .temp_raw_i(temp_raw_i),
+        .mem_busy_i(rib_mem_busy_i),            //把 wje_bridge busy 送入 wje_ex 禁止提前写回
+        .reg_wdata_o(ex_reg_wdata_o),
+        .reg_we_o(ex_reg_we_o),
+        .reg_waddr_o(ex_reg_waddr_o),
+        .hold_flag_o(ex_hold_flag_o),
+        .jump_flag_o(ex_jump_flag_o),
+        .jump_addr_o(ex_jump_addr_o),
+        .sid_start_o(sid_start_o),
+        .if_uart_start_o(ex_if_uart_start_o),
+        .if_uart_data_o(ex_if_uart_data_o),
+        .if_uart_hold_o(ex_if_uart_hold_o),
+        .temp_start_o(ex_temp_start_o),
+        .temp_hold_o(ex_temp_hold_o)
+    );
+
+endmodule

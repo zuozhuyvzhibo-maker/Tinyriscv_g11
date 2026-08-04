@@ -1,0 +1,4 @@
+TEST_BEGIN chip_sel=0 kind=IF mem=rtl_tomerge/rtl/merge_version/lhr/tests/programs/IF_inst.data words=10 max_cycles=500000
+UART_TX chip_sel=0 cycle=252 index=0 byte=0x8a
+TEST_PASS chip_sel=0 kind=IF cycles=252 uart=0x8a x14=0x00000001
+rtl_tomerge\rtl\merge_version\tb\tinyriscv_merge_validation_tb.v:220: $finish called at 5250000 (1ps)
